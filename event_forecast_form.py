@@ -44,8 +44,7 @@ def main():
             st.write(event_data)
 
             # Drop target variables and preprocess the data
-            event_data = event_data.drop(['TICKETS_SOLD','TICKET_TYPE_SOLD_OUT','TICKETS_CALCULATED_FACE_VALUE'], axis=1)
-            preprocessed_data = utils.preprocess_data(event_data)
+            preprocessed_data = utils.preprocess_data(event_data.drop(['TICKETS_SOLD','TICKET_TYPE_SOLD_OUT','TICKETS_CALCULATED_FACE_VALUE'], axis=1))
             st.write("\n")
 
         
@@ -471,12 +470,22 @@ def main():
         # Show predictions
         st.write("\n")
         st.subheader("Predicciones del modelo")
-        predictions_df = pd.DataFrame(predictions, columns=['% Sold out'])
-        predictions_df['Tickets vendidos'] = predictions_df['% Sold out'] * event_data['TICKET_TYPE_QUANTITY']
-        predictions_df['Valor de tickets (MXN)'] = predictions_df['Tickets vendidos'] * event_data['TICKET_TYPE_PRICE']
-        predictions_df['% Sold out'] = predictions_df['% Sold out'] * 100
-        predictions_df['% Sold out'] = predictions_df['% Sold out'].round(decimals=2)
-        predictions_df[['Tickets vendidos', 'Valor de tickets (MXN)']] = predictions_df[['Tickets vendidos', 'Valor de tickets (MXN)']].round()
+        predictions_df = pd.DataFrame()
+        # Ticket type
+        predictions_df['Tipo de Boleto'] = event_data['TICKET_TYPE_NAME']
+        # Sold out %
+        predictions_df['Sold out prediccion (%)'] = pd.DataFrame(predictions, columns=['Sold out prediccion (%)'])
+        predictions_df['Sold out real (%)'] = event_data['TICKET_TYPE_SOLD_OUT'].astype(float) * 100
+        # Tickets sold
+        predictions_df['Tickets vendidos prediccion'] = predictions_df['Sold out prediccion (%)'] * event_data['TICKET_TYPE_QUANTITY']
+        predictions_df['Tickets vendidos real'] = event_data["TICKETS_SOLD"]
+        # Tickets sold value
+        predictions_df['Valor de tickets prediccion (MXN)'] = predictions_df['Tickets vendidos prediccion'] * event_data['TICKET_TYPE_PRICE']
+        predictions_df['Valor de tickets real (MXN)'] = event_data["TICKETS_CALCULATED_FACE_VALUE"]
+        # Formating
+        predictions_df['Sold out prediccion (%)'] = predictions_df['Sold out prediccion (%)'] * 100
+        predictions_df[['Sold out prediccion (%)', 'Sold out real (%)']] = predictions_df[['Sold out prediccion (%)','Sold out real (%)']].round(decimals=2)
+        predictions_df[['Tickets vendidos prediccion', 'Valor de tickets prediccion (MXN)']] = predictions_df[['Tickets vendidos prediccion', 'Valor de tickets prediccion (MXN)']].round()
 
         st.write(predictions_df)
         st.warning(f"El error promedio del modelo es de 25.63% del sold out.")
