@@ -32,7 +32,6 @@ cur = ctx.cursor()
 
 """ Function to query event data using event_id """
 
-@st.cache_data
 def query_event_data(event_id):
     
     # Execute a query to extract the data
