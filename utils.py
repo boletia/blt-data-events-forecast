@@ -1,8 +1,10 @@
 import os
+import requests
 import json
 import joblib
 import datetime
 import math
+import time
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -31,7 +33,6 @@ cur = ctx.cursor()
 
 
 """ Function to query event data using event_id """
-
 @st.cache_data
 def query_event_data(event_id):
     
@@ -359,8 +360,7 @@ def query_event_data(event_id):
 
 
 """ Function to preprocess data"""
-
-def preprocess_data(event_data):
+def preprocess_data(event_data, aditional_columns=False):
     
     # Generate the venue area data (m^2) from the gmaps coordinates
     areas = []
@@ -393,27 +393,37 @@ def preprocess_data(event_data):
     # Create column of city population percentage of country
     event_data['CITY_POPULATION_PCT'] = event_data['CITY_POPULATION'] / 127500000
 
-    # Drop not required columns
-    columns_to_drop = ['EVENT_ID',
-                    'EVENT_NAME',
-                    'EVENT_PLANNING_DATE',
-                    'EVENT_CREATED_AT',
-                    'EVENT_STARTED_AT',
-                    'VENUE_ID',
-                    'VENUE_NAME',
-                    'ARTIST_ID',
-                    'ARTIST_NAME',
-                    'NE_LAT',
-                    'NE_LON',
-                    'SW_LAT',
-                    'SW_LON',
-                    'TICKET_TYPE_ID',
-                    'TICKET_TYPE_NAME',
-                    'CITY',
-                    'STATE',
-                    'ADV_CATEGORY_EVENT_SUBCATEGORY',
-                    'ARTIST_GENRE'
-                    ]
+    if aditional_columns == True:
+        columns_to_drop = [ 'EVENT_ID',
+                            'EVENT_NAME',
+                            'EVENT_PLANNING_DATE',
+                            'EVENT_CREATED_AT',
+                            'EVENT_STARTED_AT',
+                            'ADV_CATEGORY_EVENT_SUBCATEGORY',
+                            'VENUE_ID',
+                            'VENUE_NAME',
+                            'ARTIST_ID',
+                            'ARTIST_NAME',
+                            'NE_LAT',
+                            'NE_LON',
+                            'SW_LAT',
+                            'SW_LON',
+                            'TICKET_TYPE_ID',
+                            'TICKET_TYPE_NAME',
+                            'CITY',
+                            'STATE',
+                            
+                            'ARTIST_GENRE',
+                            'TICKETS_SOLD',
+                            'TICKET_TYPE_SOLD_OUT',
+                            'TICKETS_CALCULATED_FACE_VALUE'
+                        ]
+    else:
+        columns_to_drop = ['NE_LAT',
+                           'NE_LON',
+                           'SW_LAT',
+                           'SW_LON'
+                           ]
 
     event_data = event_data.drop(columns_to_drop, axis=1)
 
@@ -424,76 +434,9 @@ def preprocess_data(event_data):
     return preprocessed_data
 
 
-""" Fuction to transform numeric data using the scaler """
-
-def normalize(numeric_data, scaler_name):
-    # Read the scaler from the pickel file
-    scaler = joblib.load(scaler_name)
-
-    # Apply the trasnformation
-    normalized_data = scaler.transform(numeric_data)
-
-    return normalized_data
-
-
-""" Get the day of the yaer in a date (1 - 365) """
-
-def day_of_year(date):
-    start_of_year = datetime.date(date.year, 1, 1)
-    delta = date - start_of_year
-    return delta.days + 1
-
-
-""" List with the possible music genres of the events """
-
-music_genres = ["Acustico", "Alternativa", "Blues y Jazz", 
-                #"Clasica",
-                "DJ / Dance / Electronica",
-                "Experimental", "Folklorica", "Hip-Hop / Rap / Batallas de Rap", "Indie", "K-Pop",
-                "Metal", 
-                #"Opera",
-                "Otro", "Pop",
-                #"Psicodelico",
-                "Punk / Hardcore", "Reggae",
-                "Religioso / Espiritual", "Rock", "Tropical"]
-
-
-""" List with the possible commercial values for the organizer of the event """
-
-commercial_values = ["medium", "micro", "nano", "small", "super_top", "top"]
-
-
-""" List with the days of the week """
-
-days = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
-
-
-""" List with the months of the year """
-
-months = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-
-
-""" List with the possible type/gender of the artist """
-
-artist_type_genders =["Group", "female", "male"]
-
-
-""" Get the area of the venue from the north east and south west points coordinates """
-
-def get_area(ne_lat, ne_lon, sw_lat, sw_lon):
-    ne_coords = (ne_lat, ne_lon)
-    sw_coords = (sw_lat, sw_lon)
-        
-    width = geodesic(ne_coords, (ne_coords[0], sw_coords[1])).meters
-    height = geodesic(ne_coords, (sw_coords[0], ne_coords[1])).meters
-
-    return width * height
-
-
 """ Get Google Maps venue data """
-
-@st.cache
-def get_venue_data(place_id):
+@st.cache_data
+def get_venues_data():
     # Execute a query to extract the data
     sql = f"""select
                 name,
@@ -503,10 +446,11 @@ def get_venue_data(place_id):
                 ne_lon,
                 sw_lat,
                 sw_lon,
-                rating,
-                user_ratings_total
+                rating as venue_rating,
+                user_ratings_total as venue_total_ratings,
+                capacity as venue_capacity,
+                concat(name, ' (', city, ', ', state, ')') as venue
             from core.places
-            where place_id = '{place_id}'
             """
     try:
         cur.execute(sql)
@@ -519,24 +463,27 @@ def get_venue_data(place_id):
     
 
 """ Get demographics data from INEGI """
-
-@st.cache
+@st.cache_data
 def get_inegi_data(city, state):
     # Execute a query to extract the data
     sql = f"""select
+                total_population / households as city_avg_people_per_house,
+                total_population as city_population,
+                female_population / total_population as female_population_pct,
+                male_population / total_population as male_population_pct,
+                pop_0_11 / total_population as pop_0_11_pct,
+                pop_12_17 / total_population as pop_12_17_pct,
+                pop_18_24 / total_population as pop_18_24_pct,
+                pop_25_34 / total_population as pop_25_34_pct,
+                pop_35_44 / total_population as pop_35_44_pct,
+                pop_45_64 / total_population as pop_45_64_pct,
+                pop_65_and_more / total_population as pop_65_and_more_pct,
                 pct_10,
                 pct_30,
                 pct_50,
                 pct_70,
                 pct_90,
-                pct_95,
-                pct_lower_class,
-                pct_lower_middle_class,
-                pct_upper_middle_class,
-                pct_upper_class,
-                total_population,
-                male_population/total_population as male_population_pct,
-                female_population/total_population as female_population_pct
+                pct_95
             from demographics.income_by_city
             where city = '{city}'
             and state = '{state}'
@@ -549,141 +496,231 @@ def get_inegi_data(city, state):
     
     except:
         return pd.DataFrame()
+
+
+""" Function to authenticate Chartmetric API """
+def cm_auth():
+    url = 'https://api.chartmetric.com'
+    response = requests.post(f'{url}/api/token', json={"refreshtoken": str(os.getenv("CM_APIKEY", ''))})
+    if response.status_code != 200:
+        print(f'ERROR: received a {response.status_code} instead of 200 from /api/token')
+    access_token = response.json()['token']
+    headers={'Authorization': f'Bearer {access_token}'}
+    return headers
+
+
+""" Generic call to Chartmetric API """
+def cm_api_call(url, headers):
+    response = requests.get(url, headers=headers)
+
+    while response.status_code == 502:
+        time.sleep(2)
+        print(" 502 Error received, trying again")
+        response = requests.get(url, headers=headers)
+        time.sleep(2)
+
+    while response.status_code == 429:
+        print(" Rate limit exceeded, waiting a second...")
+        time.sleep(1)
+        response = requests.get(url, headers=headers)
+
+    if float(response.headers['X-Response-Time'][0:-2]) < 1000:
+            sleep_time = 1300 - float(response.headers['X-Response-Time'][0:-2])
+            time.sleep(sleep_time/1000)
+
+    return response
+
+
+""" Get Spotify artist listeners in MX"""
+@st.cache_data
+def cm_sp_listeners(cm_id, headers):
+    try:
+        url = f"https://api.chartmetric.com/api/artist/{cm_id}/where-people-listen?since=2024-01-01&latest=true"
+        response = cm_api_call(url, headers)
+
+        return response.json()['obj']['countries']['Mexico'][0]['listeners']
     
+    except:
+        return None
+    
+
+""" Get Spotify artist followers """
+@st.cache_data
+def cm_sp_metrics(cm_id, headers):
+    try:
+        url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/spotify?latest=true"
+        response = cm_api_call(url, headers)
+        followers = response.json()['obj']['followers'][0]['value']
+        popularity = response.json()['obj']['popularity'][0]['value']
+        listeners = response.json()['obj']['listeners'][0]['value']
+        followers_to_listeners = response.json()['obj']['followers_to_listeners_ratio'][0]['value']
+
+        return followers, listeners, followers_to_listeners, popularity
+    
+    except:
+        return None, None, None, None
+    
+
+""" Get Instagram artist followers """
+@st.cache_data
+def cm_ig_metrics(cm_id, headers):
+    try:
+        url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/instagram?latest=true"
+        response = cm_api_call(url, headers)
+        followers = response.json()['obj']['followers'][0]['value']
+
+        url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/instagram?latest=true&code2=MX"
+        response = cm_api_call(url, headers)
+        followers_mx = response.json()['obj']['followers'][0]['value']
+    
+        return followers, followers_mx
+
+    except:
+        return None, None
+    
+
+# Get youtube metrics
+@st.cache_data
+def cm_yt_metrics(cm_id, headers):
+    try:
+        url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/youtube_channel?latest=true"
+        response = cm_api_call(url, headers)
+        subscribers = response.json()['obj']['subscribers'][0]['value']
+        views = response.json()['obj']['views'][0]['value']
+        videos = response.json()['obj']['videos'][0]['value']
+        
+        url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/youtube_channel?latest=true&code2=MX"
+        response = cm_api_call(url, headers)
+        subscribers_mx = response.json()['obj']['subscribers'][0]['value']
+
+        return subscribers, subscribers_mx, views, videos
+    
+    except:
+        return None, None, None, None
+
+
+# Get tiktok metrics
+@st.cache_data
+def cm_tt_metrics(cm_id, headers):
+    try:
+        url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/tiktok?latest=true"
+        response = cm_api_call(url, headers)
+        followers = response.json()['obj']['followers'][0]['value']
+        likes = response.json()['obj']['likes'][0]['value']
+
+        url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/tiktok?latest=true&code2=MX"
+        response = cm_api_call(url, headers)
+        followers_mx = response.json()['obj']['followers'][0]['value']
+
+        return followers, followers_mx, likes
+    
+    except:
+        return None, None, None
+
 
 """ Get artist chartmetric data """
+@st.cache_data
+def get_cm_data(cm_id):
+    headers = cm_auth()
+    cm_data = pd.DataFrame()
 
-@st.cache
-def get_cm_data(chartmetric_id):
-    # Execute a query to extract the data
-    sql = f"""
-            select distinct
-                artist_name,
-                artist_id,
-                COALESCE(FIRST_VALUE(cm_artist_rank) IGNORE NULLS OVER (PARTITION BY artist_name ORDER BY created_at DESC), 999999) AS cm_rank,
-                COALESCE(FIRST_VALUE(cm_artist_country_rank[0]:artist_rank::string) IGNORE NULLS OVER (PARTITION BY artist_name ORDER BY created_at DESC), '999999') AS country_rank,
-                COALESCE(FIRST_VALUE(cm_artist_genre_rank[0]:artist_rank) IGNORE NULLS OVER (PARTITION BY artist_name ORDER BY created_at DESC), 999999) AS genre_rank,
-                COALESCE(FIRST_VALUE(cm_artist_subgenre_rank[0]:artist_rank) IGNORE NULLS OVER (PARTITION BY artist_name ORDER BY created_at DESC), 999999) AS subgenre_rank
-            from raw.chartmetric.events_historical_ranks
-            where chartmetric_id = {chartmetric_id}
-            """
+    # Spotify data
+    cm_data["SP_MONTHLY_LISTENERS_MX"] = [cm_sp_listeners(cm_id, headers)]
+    sp_followers, sp_listeners, sp_followers_to_listeners, sp_popularity = cm_sp_metrics(cm_id, headers)
+    cm_data["SP_FOLLOWERS"] = [sp_followers]
+    cm_data["SP_LISTENERS"] = [sp_listeners]
+    cm_data["SP_FOLLOWERS_TO_LISTENERS_RATIO"] = [sp_followers_to_listeners]
+    cm_data["SP_POPULARITY"] = sp_popularity
+
+    # Instagram data
+    cm_ig_metrics(cm_id, headers)
+    ig_followers, ig_followers_mx = cm_ig_metrics(cm_id, headers)
+    cm_data["IG_FOLLOWERS"] = [ig_followers]
+    cm_data["IG_FOLLOWERS_MX"] = [ig_followers_mx]
+
+    # Youtube data
+    yt_subs, yt_subs_mx, views, videos = cm_yt_metrics(cm_id, headers)
+    cm_data["YT_SUBSCRIBERS"] = [yt_subs]
+    cm_data["YT_SUBSCRIBERS_MX"] = [yt_subs_mx]
+    cm_data["YT_VIEWS"] = [views]
+    cm_data["YT_VIDEOS"] = [videos]
+
+    # Tiktok data
+    tt_followers, tt_followers_mx, tt_likes = cm_tt_metrics(cm_id, headers)
+    cm_data["TT_FOLLOWERS"] = [tt_followers]
+    cm_data["TT_FOLLOWERS_MX"] = [tt_followers_mx]
+    cm_data["TT_LIKES"] = [tt_likes]
     
-    #print(sql)
-    try:
-        cur.execute(sql)
-        # Converting data into a dataframe
-        df = cur.fetch_pandas_all()
-        return df
+    return cm_data
+
+
+""" Assemble the dataframe for the preprocessor """
+def get_dataframe(dayofweek_start, start_month, venue_data, inegi_data, artist_data, guests, ticket_type_price, ticket_type_quantity, ticket_type):
+    df = pd.DataFrame()
+    df['EVENT_DAYOFWEEK_START'] = [dayofweek_start]
+    df['EVENT_START_MONTH'] = [start_month]
+    df['VENUE_RATING'] = venue_data['VENUE_RATING']
+    df['VENUE_TOTAL_RATINGS'] = venue_data['VENUE_TOTAL_RATINGS']
+    df['VENUE_CAPACITY'] = venue_data['VENUE_CAPACITY']
+    df['NE_LAT'] = venue_data['NE_LAT']
+    df['NE_LON'] = venue_data['NE_LON']
+    df['SW_LAT'] = venue_data['SW_LAT']
+    df['SW_LON'] = venue_data['SW_LON']
+    df['STATE_FOREIGN_SALES_PCT'] = None
+    df['STATE_DEBIT_CARD_SALES_PCT'] = None
+    df['STATE_TRADITIONAL_CARD_SALES_PCT'] = None
+    df['STATE_GOLD_CARD_SALES_PCT'] = None
+    df['STATE_PLATINUM_CARD_SALES_PCT'] = None
+    df['STATE_AMEX_CARD_SALES_PCT'] = None
+    df['CITY_AVG_PEOPLE_PER_HOUSE'] = inegi_data['CITY_AVG_PEOPLE_PER_HOUSE']
+    df['CITY_POPULATION'] = inegi_data['CITY_POPULATION']
+    df['FEMALE_POPULATION_PCT'] = inegi_data['FEMALE_POPULATION_PCT']
+    df['MALE_POPULATION_PCT'] = inegi_data['MALE_POPULATION_PCT']
+    df['POP_0_11_PCT'] = inegi_data['POP_0_11_PCT']
+    df['POP_12_17_PCT'] = inegi_data['POP_12_17_PCT']
+    df['POP_18_24_PCT'] = inegi_data['POP_18_24_PCT']
+    df['POP_25_34_PCT'] = inegi_data['POP_25_34_PCT']
+    df['POP_35_44_PCT'] = inegi_data['POP_35_44_PCT']
+    df['POP_45_64_PCT'] = inegi_data['POP_45_64_PCT']
+    df['POP_65_AND_MORE_PCT'] = inegi_data['POP_65_AND_MORE_PCT']
+    df['PCT_10'] = inegi_data['PCT_10']
+    df['PCT_30'] = inegi_data['PCT_30']
+    df['PCT_50'] = inegi_data['PCT_50']
+    df['PCT_70'] = inegi_data['PCT_70']
+    df['PCT_90'] = inegi_data['PCT_90']
+    df['PCT_95'] = inegi_data['PCT_95']
+    df['SP_MONTHLY_LISTENERS_MX'] = artist_data['SP_MONTHLY_LISTENERS_MX']
+    df['SP_MONTHLY_LISTENERS_CITY'] = None if df.iloc[0]['SP_MONTHLY_LISTENERS_MX'] is None else round(df['SP_MONTHLY_LISTENERS_MX'] * df['CITY_POPULATION'] / 127500000)
+    df['SP_FOLLOWERS'] = artist_data['SP_FOLLOWERS']
+    df['SP_LISTENERS'] = artist_data['SP_LISTENERS']
+    df['SP_FOLLOWERS_TO_LISTENERS_RATIO'] = artist_data['SP_FOLLOWERS_TO_LISTENERS_RATIO']
+    df['SP_POPULARITY'] = artist_data['SP_POPULARITY']
+    df['IG_FOLLOWERS'] = artist_data['IG_FOLLOWERS']
+    df['IG_FOLLOWERS_MX'] = artist_data['IG_FOLLOWERS_MX']
+    df['IG_FOLLOWERS_CITY'] = None if df.iloc[0]['IG_FOLLOWERS_MX'] is None else round(df['IG_FOLLOWERS_MX'] * df['CITY_POPULATION'] / 127500000)
+    df['YT_SUBSCRIBERS'] = artist_data['YT_SUBSCRIBERS']
+    df['YT_SUBSCRIBERS_MX'] = artist_data['YT_SUBSCRIBERS_MX']
+    df['YT_SUBSCRIBERS_CITY'] = None if df.iloc[0]['YT_SUBSCRIBERS_MX'] is None else round(df['YT_SUBSCRIBERS_MX'] * df['CITY_POPULATION'] / 127500000)
+    df['YT_VIEWS'] = artist_data['YT_VIEWS']
+    df['YT_VIDEOS'] = artist_data['YT_VIDEOS']
+    df['TT_FOLLOWERS'] = artist_data['TT_FOLLOWERS']
+    df['TT_FOLLOWERS_MX'] = artist_data['TT_FOLLOWERS_MX']
+    df['TT_FOLLOWERS_CITY'] = None if df.iloc[0]['TT_FOLLOWERS_MX'] is None else round(df['TT_FOLLOWERS_MX'] * df['CITY_POPULATION'] / 127500000)
+    df['TT_LIKES'] = artist_data['TT_LIKES']
+    df['GENRE_AVG_CONVERTION_RATE'] = None
+    df['GENRE_FOREIGN_SALES_PCT'] = None
+    df['GENRE_DEBIT_CARD_SALES_PCT'] = None
+    df['GENRE_TRADITIONAL_CARD_SALES_PCT'] = None
+    df['GENRE_GOLD_CARD_SALES_PCT'] = None
+    df['GENRE_PLATINUM_CARD_SALES_PCT'] = None
+    df['GENRE_AMEX_CARD_SALES_PCT'] = None
+    df['TICKET_TYPE_QUANTITY'] = ticket_type_quantity
+    df['TICKET_TYPE_PRICE'] = ticket_type_price
+    df['GENERAL_TICKET'] = True if ticket_type == 'General' else False
+    df['VIP_TICKET'] = True if ticket_type == 'VIP' else False
+    df['MEET_AND_GREET_TICKET'] = True if ticket_type == 'Meet and Greet' else False
+    df['SIMILAR_EVENTS'] = None
+    df['GUESTS'] = guests
+
+    return df
     
-    except:
-        return pd.DataFrame()
-    
-
-""" Get artist fan metrics data """
-
-@st.cache
-def get_fm_data(chartmetric_id):
-    # Execute a query to extract the data
-    sql = f"""
-            select
-                distinct id,
-                COALESCE(FIRST_VALUE(spotify_followers) IGNORE NULLS OVER (ORDER BY timestamp DESC), 0) AS spotify_followers,
-                COALESCE(FIRST_VALUE(spotify_popularity) IGNORE NULLS OVER (ORDER BY timestamp DESC), 0) AS spotify_popularity,
-                COALESCE(FIRST_VALUE(spotify_listeners) IGNORE NULLS OVER (ORDER BY timestamp DESC), 0) AS spotify_listeners,
-                COALESCE(FIRST_VALUE(spotify_followers_to_listeners_ratio) IGNORE NULLS OVER (ORDER BY timestamp DESC), 0) AS spotify_followers_to_listeners_ratio,
-                COALESCE(FIRST_VALUE(facebook_likes) IGNORE NULLS OVER (ORDER BY timestamp DESC), 0) AS facebook_likes,
-                COALESCE(FIRST_VALUE(facebook_talks) IGNORE NULLS OVER (ORDER BY timestamp DESC), 0) AS facebook_talks,
-                COALESCE(FIRST_VALUE(youtube_channel_views) IGNORE NULLS OVER (ORDER BY timestamp DESC), 0) AS youtube_channel_views
-            from artists.fan_metrics
-            where id = {chartmetric_id}
-            """
-    
-    #print(sql)
-    try:
-        cur.execute(sql)
-        # Converting data into a dataframe
-        df = cur.fetch_pandas_all()
-        return df
-    
-    except:
-        return pd.DataFrame()
-    
-
-""" Get artist instagram data """
-
-@st.cache
-def get_ig_data(chartmetric_id):
-    # Execute a query to extract the data
-    sql = f"""
-            select
-                distinct chartmetric_id,
-                COALESCE(FIRST_VALUE(top_countries) IGNORE NULLS OVER (ORDER BY timestp DESC), '') AS ig_top_countries,
-                COALESCE(FIRST_VALUE(TO_DECIMAL(IFF(GET(parse_json(AUDIENCE_GENDERS), 0):code = 'female', GET(parse_json(AUDIENCE_GENDERS), 0):weight, GET(parse_json(AUDIENCE_GENDERS), 1):weight), 10, 2)) IGNORE NULLS OVER (ORDER BY timestp DESC), 0) AS ig_female_audience,
-                COALESCE(FIRST_VALUE(TO_DECIMAL(IFF(GET(parse_json(AUDIENCE_GENDERS), 0):code = 'male', GET(parse_json(AUDIENCE_GENDERS), 0):weight, GET(parse_json(AUDIENCE_GENDERS), 1):weight), 10, 2)) IGNORE NULLS OVER (ORDER BY timestp DESC), 0) AS ig_male_audience,
-                COALESCE(FIRST_VALUE(followers) IGNORE NULLS OVER (ORDER BY timestp DESC), 0) AS ig_followers,
-                COALESCE(FIRST_VALUE(avg_likes_per_post) IGNORE NULLS OVER (ORDER BY timestp DESC), 0) AS ig_avg_likes,
-                COALESCE(FIRST_VALUE(avg_commments_per_post) IGNORE NULLS OVER (ORDER BY timestp DESC), 0) AS ig_avg_comments
-            from raw.chartmetric.ig_audience_data
-            where chartmetric_id = {chartmetric_id}
-            """
-    
-    #print(sql)
-    try:
-        cur.execute(sql)
-        # Converting data into a dataframe
-        df = cur.fetch_pandas_all()
-        return df
-    
-    except:
-        return pd.DataFrame()
-    
-
-""" Get the MX metrics of IG stats """
-
-def get_ig_mx(json_str):
-    
-    # Initialize values
-    followers_mx = 0
-    percent_mx = 0
-
-    try: 
-        # Get the json data in a list of dictionaries
-        data = json.loads(json_str)
-
-        # Iterate the dictinaries
-        for item in data:
-            if item.get("code") == "MX":
-                followers_mx = item.get("followers")
-                percent_mx = item.get("percent")
-                break  # Finish the loop
-    except:
-        print("Error extrayendo valores de json:", json_str)
-
-    return followers_mx, percent_mx
-
-
-""" Get artist gender type """
-
-@st.cache
-def get_artist_gender_type(artist_id):
-    # Execute a query to extract the data
-    sql = f"""
-            select
-                case
-                    when artist_type = 'Group' then 'Group'
-                    when artist_type = 'Person' then gender
-                    else null
-                end as artist_type_gender
-            from core.artists
-            where artist_id = '{artist_id}'
-            """
-    
-    print(sql)
-    try:
-        cur.execute(sql)
-        # Converting data into a dataframe
-        df = cur.fetch_pandas_all()
-        return df
-    
-    except:
-        return pd.DataFrame()
