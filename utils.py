@@ -450,7 +450,7 @@ def get_venues_data():
                 rating as venue_rating,
                 user_ratings_total as venue_total_ratings,
                 capacity as venue_capacity,
-                concat(name, ' (', city, ', ', state, ')') as venue
+                CONCAT(name, ' (', city, ', ', state, ') - ', COALESCE(TO_VARCHAR(capacity), ' Sin datos de aforo')) AS venue
             from core.places
             """
     try:
@@ -459,7 +459,8 @@ def get_venues_data():
         df = cur.fetch_pandas_all()
         return df
     
-    except:
+    except Exception as e:
+        print("Error ejecutando la consulta:", str(e))
         return pd.DataFrame()
     
 
