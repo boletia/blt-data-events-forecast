@@ -320,12 +320,12 @@ def query_event_data(event_id):
                 select
                     t.ticket_type_id,
                     count(distinct t.ticket_id) as tickets_sold,
-                    sum(t.face_value) as tickets_face_value,
-                    sum(t.ticket_total) as tickets_total
+                    sum(t.face_value) as tickets_face_value
                 from events_base as e
-                left join prod.core.tickets as t on t.event_id = e.event_id
+                left join prod.core.bookings as b on b.event_id = e.event_id
+                left join prod.core.tickets as t on b.booking_id = t.booking_id
                 where e.artist_number = 1
-                and t.booking_status = 'complete'
+                and b.status = 'complete'
                 group by 1
             ),
 
@@ -355,7 +355,8 @@ def query_event_data(event_id):
         df = cur.fetch_pandas_all()
         return df
     
-    except:
+    except Exception as e:
+        print("Error ejecutando la consulta:", str(e))
         return pd.DataFrame()
 
 
@@ -383,12 +384,12 @@ def preprocess_data(event_data, aditional_columns=False):
     event_data['VENUE_AREA'] = areas
 
     # Create columns of the percentage of income that represents a ticket
-    event_data['TICKET_PCT_10'] = event_data['TICKET_TYPE_PRICE'] / event_data['PCT_10'] * 100
-    event_data['TICKET_PCT_30'] = event_data['TICKET_TYPE_PRICE'] / event_data['PCT_30'] * 100
-    event_data['TICKET_PCT_50'] = event_data['TICKET_TYPE_PRICE'] / event_data['PCT_50'] * 100
-    event_data['TICKET_PCT_70'] = event_data['TICKET_TYPE_PRICE'] / event_data['PCT_70'] * 100
-    event_data['TICKET_PCT_90'] = event_data['TICKET_TYPE_PRICE'] / event_data['PCT_90'] * 100
-    event_data['TICKET_PCT_95'] = event_data['TICKET_TYPE_PRICE'] / event_data['PCT_95'] * 100
+    event_data['TICKET_PCT_10'] = event_data['TICKET_TYPE_PRICE'].astype(float) / event_data['PCT_10'].astype(float) * 100
+    event_data['TICKET_PCT_30'] = event_data['TICKET_TYPE_PRICE'].astype(float) / event_data['PCT_30'].astype(float) * 100
+    event_data['TICKET_PCT_50'] = event_data['TICKET_TYPE_PRICE'].astype(float) / event_data['PCT_50'].astype(float) * 100
+    event_data['TICKET_PCT_70'] = event_data['TICKET_TYPE_PRICE'].astype(float) / event_data['PCT_70'].astype(float) * 100
+    event_data['TICKET_PCT_90'] = event_data['TICKET_TYPE_PRICE'].astype(float) / event_data['PCT_90'].astype(float) * 100
+    event_data['TICKET_PCT_95'] = event_data['TICKET_TYPE_PRICE'].astype(float) / event_data['PCT_95'].astype(float) * 100
 
     # Create column of city population percentage of country
     event_data['CITY_POPULATION_PCT'] = event_data['CITY_POPULATION'] / 127500000
