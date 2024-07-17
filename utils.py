@@ -362,37 +362,6 @@ def query_event_data(event_id):
 
 """ Function to preprocess data"""
 def preprocess_data(event_data, aditional_columns=False):
-    
-    # Generate the venue area data (m^2) from the gmaps coordinates
-    areas = []
-    for _, row in event_data.iterrows():
-        ne_coords = (row['NE_LAT'], row['NE_LON'])
-        sw_coords = (row['SW_LAT'], row['SW_LON'])
-        
-        # Check if the values are not NaN
-        if not (math.isnan(ne_coords[0]) or math.isnan(ne_coords[1]) or
-                math.isnan(sw_coords[0]) or math.isnan(sw_coords[1])):
-            
-            width = geodesic(ne_coords, (ne_coords[0], sw_coords[1])).meters
-            height = geodesic(ne_coords, (sw_coords[0], ne_coords[1])).meters
-            
-            area_m2 = width * height
-            areas.append(area_m2)
-        else:
-            areas.append(None)
-
-    event_data['VENUE_AREA'] = areas
-
-    # Create columns of the percentage of income that represents a ticket
-    event_data['TICKET_PCT_10'] = event_data['TICKET_TYPE_PRICE'].astype(float) / event_data['PCT_10'].astype(float) * 100
-    event_data['TICKET_PCT_30'] = event_data['TICKET_TYPE_PRICE'].astype(float) / event_data['PCT_30'].astype(float) * 100
-    event_data['TICKET_PCT_50'] = event_data['TICKET_TYPE_PRICE'].astype(float) / event_data['PCT_50'].astype(float) * 100
-    event_data['TICKET_PCT_70'] = event_data['TICKET_TYPE_PRICE'].astype(float) / event_data['PCT_70'].astype(float) * 100
-    event_data['TICKET_PCT_90'] = event_data['TICKET_TYPE_PRICE'].astype(float) / event_data['PCT_90'].astype(float) * 100
-    event_data['TICKET_PCT_95'] = event_data['TICKET_TYPE_PRICE'].astype(float) / event_data['PCT_95'].astype(float) * 100
-
-    # Create column of city population percentage of country
-    event_data['CITY_POPULATION_PCT'] = event_data['CITY_POPULATION'] / 127500000
 
     if aditional_columns == True:
         columns_to_drop = [ 'EVENT_ID',
@@ -419,14 +388,10 @@ def preprocess_data(event_data, aditional_columns=False):
                             'TICKET_TYPE_SOLD_OUT',
                             'TICKETS_CALCULATED_FACE_VALUE'
                         ]
-    else:
-        columns_to_drop = ['NE_LAT',
-                           'NE_LON',
-                           'SW_LAT',
-                           'SW_LON'
-                           ]
+        
+        event_data = event_data.drop(columns_to_drop, axis=1)
 
-    event_data = event_data.drop(columns_to_drop, axis=1)
+    
 
     # Load and use the preprocessor object
     preprocessor = joblib.load("preprocessor.pkl")
@@ -450,7 +415,7 @@ def get_venues_data():
                 rating as venue_rating,
                 user_ratings_total as venue_total_ratings,
                 capacity as venue_capacity,
-                CONCAT(name, ' (', city, ', ', state, ') - ', COALESCE(TO_VARCHAR(capacity), ' Sin datos de aforo')) AS venue
+                CONCAT(name, ' (', city, ', ', state, ')') AS venue
             from core.places
             """
     try:
@@ -466,30 +431,17 @@ def get_venues_data():
 
 """ Get demographics data from INEGI """
 @st.cache_data
-def get_inegi_data(city, state):
+def get_inegi_data(state):
     # Execute a query to extract the data
     sql = f"""select
-                total_population / households as city_avg_people_per_house,
-                total_population as city_population,
-                female_population / total_population as female_population_pct,
-                male_population / total_population as male_population_pct,
-                pop_0_11 / total_population as pop_0_11_pct,
-                pop_12_17 / total_population as pop_12_17_pct,
-                pop_18_24 / total_population as pop_18_24_pct,
-                pop_25_34 / total_population as pop_25_34_pct,
-                pop_35_44 / total_population as pop_35_44_pct,
-                pop_45_64 / total_population as pop_45_64_pct,
-                pop_65_and_more / total_population as pop_65_and_more_pct,
-                pct_10,
-                pct_30,
-                pct_50,
-                pct_70,
-                pct_90,
-                pct_95
+                sum(total_population) as state_population,
+                avg(pct_30) as pct_30,
+                avg(pct_50) as pct_50,
+                avg(pct_70) as pct_70
             from demographics.income_by_city
-            where city = '{city}'
-            and state = '{state}'
+            where state = '{state}'
             """
+    print(sql)
     try:
         cur.execute(sql)
         # Converting data into a dataframe
@@ -533,6 +485,19 @@ def cm_api_call(url, headers):
     return response
 
 
+""" Search for artists based on a name"""
+@st.cache_data
+def cm_search_artist(artist_name, headers):
+    try:
+        url = f"https://api.chartmetric.com/api/search?q={artist_name}&type=artists&limit=5"
+        response = cm_api_call(url, headers)
+
+        return response.json()['obj']['artists']
+    
+    except:
+        return None
+
+
 """ Get Spotify artist listeners in MX"""
 @st.cache_data
 def cm_sp_listeners(cm_id, headers):
@@ -552,15 +517,13 @@ def cm_sp_metrics(cm_id, headers):
     try:
         url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/spotify?latest=true"
         response = cm_api_call(url, headers)
-        followers = response.json()['obj']['followers'][0]['value']
         popularity = response.json()['obj']['popularity'][0]['value']
-        listeners = response.json()['obj']['listeners'][0]['value']
         followers_to_listeners = response.json()['obj']['followers_to_listeners_ratio'][0]['value']
 
-        return followers, listeners, followers_to_listeners, popularity
+        return followers_to_listeners, popularity
     
     except:
-        return None, None, None, None
+        return None, None
     
 
 """ Get Instagram artist followers """
@@ -570,15 +533,11 @@ def cm_ig_metrics(cm_id, headers):
         url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/instagram?latest=true"
         response = cm_api_call(url, headers)
         followers = response.json()['obj']['followers'][0]['value']
-
-        url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/instagram?latest=true&code2=MX"
-        response = cm_api_call(url, headers)
-        followers_mx = response.json()['obj']['followers'][0]['value']
     
-        return followers, followers_mx
+        return followers
 
     except:
-        return None, None
+        return None
     
 
 # Get youtube metrics
@@ -589,16 +548,11 @@ def cm_yt_metrics(cm_id, headers):
         response = cm_api_call(url, headers)
         subscribers = response.json()['obj']['subscribers'][0]['value']
         views = response.json()['obj']['views'][0]['value']
-        videos = response.json()['obj']['videos'][0]['value']
-        
-        url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/youtube_channel?latest=true&code2=MX"
-        response = cm_api_call(url, headers)
-        subscribers_mx = response.json()['obj']['subscribers'][0]['value']
 
-        return subscribers, subscribers_mx, views, videos
+        return subscribers, views
     
     except:
-        return None, None, None, None
+        return None, None
 
 
 # Get tiktok metrics
@@ -610,14 +564,10 @@ def cm_tt_metrics(cm_id, headers):
         followers = response.json()['obj']['followers'][0]['value']
         likes = response.json()['obj']['likes'][0]['value']
 
-        url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/tiktok?latest=true&code2=MX"
-        response = cm_api_call(url, headers)
-        followers_mx = response.json()['obj']['followers'][0]['value']
-
-        return followers, followers_mx, likes
+        return followers, likes
     
     except:
-        return None, None, None
+        return None, None
 
 
 """ Get artist chartmetric data """
@@ -628,101 +578,54 @@ def get_cm_data(cm_id):
 
     # Spotify data
     cm_data["SP_MONTHLY_LISTENERS_MX"] = [cm_sp_listeners(cm_id, headers)]
-    sp_followers, sp_listeners, sp_followers_to_listeners, sp_popularity = cm_sp_metrics(cm_id, headers)
-    cm_data["SP_FOLLOWERS"] = [sp_followers]
-    cm_data["SP_LISTENERS"] = [sp_listeners]
+    sp_followers_to_listeners, sp_popularity = cm_sp_metrics(cm_id, headers)
     cm_data["SP_FOLLOWERS_TO_LISTENERS_RATIO"] = [sp_followers_to_listeners]
     cm_data["SP_POPULARITY"] = sp_popularity
 
     # Instagram data
     cm_ig_metrics(cm_id, headers)
-    ig_followers, ig_followers_mx = cm_ig_metrics(cm_id, headers)
+    ig_followers = cm_ig_metrics(cm_id, headers)
     cm_data["IG_FOLLOWERS"] = [ig_followers]
-    cm_data["IG_FOLLOWERS_MX"] = [ig_followers_mx]
 
     # Youtube data
-    yt_subs, yt_subs_mx, views, videos = cm_yt_metrics(cm_id, headers)
+    yt_subs, views = cm_yt_metrics(cm_id, headers)
     cm_data["YT_SUBSCRIBERS"] = [yt_subs]
-    cm_data["YT_SUBSCRIBERS_MX"] = [yt_subs_mx]
     cm_data["YT_VIEWS"] = [views]
-    cm_data["YT_VIDEOS"] = [videos]
 
     # Tiktok data
-    tt_followers, tt_followers_mx, tt_likes = cm_tt_metrics(cm_id, headers)
+    tt_followers, tt_likes = cm_tt_metrics(cm_id, headers)
     cm_data["TT_FOLLOWERS"] = [tt_followers]
-    cm_data["TT_FOLLOWERS_MX"] = [tt_followers_mx]
     cm_data["TT_LIKES"] = [tt_likes]
     
     return cm_data
 
 
 """ Assemble the dataframe for the preprocessor """
-def get_dataframe(dayofweek_start, start_month, venue_data, inegi_data, artist_data, guests, ticket_type_price, ticket_type_quantity, ticket_type):
+def get_dataframe(venue_data, inegi_data, artist_data, min_ticket_price, 
+                                 avg_ticket_price, max_ticket_price, total_tickets_on_sale, total_face_value):
+    venue_data = venue_data.reset_index(drop=True)
+    inegi_data = inegi_data.reset_index(drop=True)
+    artist_data = artist_data.reset_index(drop=True)
     df = pd.DataFrame()
-    df['EVENT_DAYOFWEEK_START'] = [dayofweek_start]
-    df['EVENT_START_MONTH'] = [start_month]
     df['VENUE_RATING'] = venue_data['VENUE_RATING']
     df['VENUE_TOTAL_RATINGS'] = venue_data['VENUE_TOTAL_RATINGS']
-    df['VENUE_CAPACITY'] = venue_data['VENUE_CAPACITY']
-    df['NE_LAT'] = venue_data['NE_LAT']
-    df['NE_LON'] = venue_data['NE_LON']
-    df['SW_LAT'] = venue_data['SW_LAT']
-    df['SW_LON'] = venue_data['SW_LON']
-    df['STATE_FOREIGN_SALES_PCT'] = None
-    df['STATE_DEBIT_CARD_SALES_PCT'] = None
-    df['STATE_TRADITIONAL_CARD_SALES_PCT'] = None
-    df['STATE_GOLD_CARD_SALES_PCT'] = None
-    df['STATE_PLATINUM_CARD_SALES_PCT'] = None
-    df['STATE_AMEX_CARD_SALES_PCT'] = None
-    df['CITY_AVG_PEOPLE_PER_HOUSE'] = inegi_data['CITY_AVG_PEOPLE_PER_HOUSE']
-    df['CITY_POPULATION'] = inegi_data['CITY_POPULATION']
-    df['FEMALE_POPULATION_PCT'] = inegi_data['FEMALE_POPULATION_PCT']
-    df['MALE_POPULATION_PCT'] = inegi_data['MALE_POPULATION_PCT']
-    df['POP_0_11_PCT'] = inegi_data['POP_0_11_PCT']
-    df['POP_12_17_PCT'] = inegi_data['POP_12_17_PCT']
-    df['POP_18_24_PCT'] = inegi_data['POP_18_24_PCT']
-    df['POP_25_34_PCT'] = inegi_data['POP_25_34_PCT']
-    df['POP_35_44_PCT'] = inegi_data['POP_35_44_PCT']
-    df['POP_45_64_PCT'] = inegi_data['POP_45_64_PCT']
-    df['POP_65_AND_MORE_PCT'] = inegi_data['POP_65_AND_MORE_PCT']
-    df['PCT_10'] = inegi_data['PCT_10']
-    df['PCT_30'] = inegi_data['PCT_30']
-    df['PCT_50'] = inegi_data['PCT_50']
-    df['PCT_70'] = inegi_data['PCT_70']
-    df['PCT_90'] = inegi_data['PCT_90']
-    df['PCT_95'] = inegi_data['PCT_95']
+    df['STATE_POPULATION'] = inegi_data['STATE_POPULATION'].astype(int)
+    df['TICKET_PCT_30'] = avg_ticket_price / inegi_data['PCT_30'].astype(float) * 100
+    df['TICKET_PCT_50'] = avg_ticket_price / inegi_data['PCT_50'].astype(float) * 100
+    df['TICKET_PCT_70'] = avg_ticket_price / inegi_data['PCT_70'].astype(float) * 100
     df['SP_MONTHLY_LISTENERS_MX'] = artist_data['SP_MONTHLY_LISTENERS_MX']
-    df['SP_MONTHLY_LISTENERS_CITY'] = None if df.iloc[0]['SP_MONTHLY_LISTENERS_MX'] is None else round(df['SP_MONTHLY_LISTENERS_MX'] * df['CITY_POPULATION'] / 127500000)
-    df['SP_FOLLOWERS'] = artist_data['SP_FOLLOWERS']
-    df['SP_LISTENERS'] = artist_data['SP_LISTENERS']
-    df['SP_FOLLOWERS_TO_LISTENERS_RATIO'] = artist_data['SP_FOLLOWERS_TO_LISTENERS_RATIO']
+    df['SP_MONTHLY_LISTENERS_STATE'] = None if df.iloc[0]['SP_MONTHLY_LISTENERS_MX'] is None else round(df['SP_MONTHLY_LISTENERS_MX'].astype(int) * df['STATE_POPULATION'].astype(int) / 127500000)
+    df['SP_FOLLOWERS_TO_LISTENERS_RATIO'] = artist_data['SP_FOLLOWERS_TO_LISTENERS_RATIO'].astype(float)
     df['SP_POPULARITY'] = artist_data['SP_POPULARITY']
     df['IG_FOLLOWERS'] = artist_data['IG_FOLLOWERS']
-    df['IG_FOLLOWERS_MX'] = artist_data['IG_FOLLOWERS_MX']
-    df['IG_FOLLOWERS_CITY'] = None if df.iloc[0]['IG_FOLLOWERS_MX'] is None else round(df['IG_FOLLOWERS_MX'] * df['CITY_POPULATION'] / 127500000)
     df['YT_SUBSCRIBERS'] = artist_data['YT_SUBSCRIBERS']
-    df['YT_SUBSCRIBERS_MX'] = artist_data['YT_SUBSCRIBERS_MX']
-    df['YT_SUBSCRIBERS_CITY'] = None if df.iloc[0]['YT_SUBSCRIBERS_MX'] is None else round(df['YT_SUBSCRIBERS_MX'] * df['CITY_POPULATION'] / 127500000)
     df['YT_VIEWS'] = artist_data['YT_VIEWS']
-    df['YT_VIDEOS'] = artist_data['YT_VIDEOS']
     df['TT_FOLLOWERS'] = artist_data['TT_FOLLOWERS']
-    df['TT_FOLLOWERS_MX'] = artist_data['TT_FOLLOWERS_MX']
-    df['TT_FOLLOWERS_CITY'] = None if df.iloc[0]['TT_FOLLOWERS_MX'] is None else round(df['TT_FOLLOWERS_MX'] * df['CITY_POPULATION'] / 127500000)
     df['TT_LIKES'] = artist_data['TT_LIKES']
-    df['GENRE_AVG_CONVERTION_RATE'] = None
-    df['GENRE_FOREIGN_SALES_PCT'] = None
-    df['GENRE_DEBIT_CARD_SALES_PCT'] = None
-    df['GENRE_TRADITIONAL_CARD_SALES_PCT'] = None
-    df['GENRE_GOLD_CARD_SALES_PCT'] = None
-    df['GENRE_PLATINUM_CARD_SALES_PCT'] = None
-    df['GENRE_AMEX_CARD_SALES_PCT'] = None
-    df['TICKET_TYPE_QUANTITY'] = ticket_type_quantity
-    df['TICKET_TYPE_PRICE'] = ticket_type_price
-    df['GENERAL_TICKET'] = True if ticket_type == 'General' else False
-    df['VIP_TICKET'] = True if ticket_type == 'VIP' else False
-    df['MEET_AND_GREET_TICKET'] = True if ticket_type == 'Meet and Greet' else False
-    df['SIMILAR_EVENTS'] = None
-    df['GUESTS'] = guests
-
+    df['TOTAL_TICKETS_ON_SALE'] = total_tickets_on_sale
+    df['TOTAL_FACE_VALUE'] = total_face_value
+    df['MIN_TICKET_PRICE'] = min_ticket_price
+    df['AVERAGE_TICKET_PRICE'] = avg_ticket_price
+    df['MAX_TICKET_PRICE'] = max_ticket_price
     return df
     
