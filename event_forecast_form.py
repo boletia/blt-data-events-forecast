@@ -8,136 +8,132 @@ import mlflow
 import joblib
 from datetime import datetime
 from mlflow.deployments import get_deploy_client
-from millify import prettify
+from millify import millify
 
 
 def main():
 
-    # Check the deploy variable to load local models or use sagemaker 
-    if utils.DEPLOY_LOCAL:
-        # load local models
-        model = joblib.load('model.pkl')
-        st.write("Se está usando un modelo en modo local *")
-    else:
-        # use sagemaker client 
-        client = get_deploy_client(f"sagemaker:/us-east-1")
-        st.write("Se está usando un modelo via Sagemaker API *")
-
+    # Load model
+    model = joblib.load('model.pkl')
 
     st.title("Forecast de Eventos")
     st.write("\n")
+    st.write("\n")
 
+    # Venue and demographic data
+    venues_df = utils.get_venues_data()
+    selected_venue = st.selectbox("Seleccione el venue", venues_df['VENUE'])
+    venue_data = venues_df[selected_venue == venues_df['VENUE']]
+    inegi_data = utils.get_inegi_data(venue_data.iloc[0]['STATE'])
 
-    # Radio button to select how to enter the data
-    option = st.radio("Selecciona una opción:", ("Buscar datos con ID de evento", "Ingresar datos manualmente"))
+    # Tickets data
+    c1, c2 = st.columns(2)
 
-    if option == "Buscar datos con ID de evento":
-        st.write("\n")
-        event_id = st.text_input("ID de evento:", placeholder='174472')
-        event_data = utils.query_event_data(event_id)
-
-        if event_data.empty:
-            st.warning(f"No hay datos del evento: {event_id}")
-
-        else:
-            st.write("\n")
-            st.subheader("Datos del evento y boletos")
-            st.write(event_data)
-
-            # Drop target variables and preprocess the data
-            preprocessed_data = utils.preprocess_data(event_data, aditional_columns=True)
-            st.write("\n")
+    with c1:
+        min_ticket_price = st.number_input("Precio mínimo del boleto (MXN)", min_value=100, step=100)
+    
+    with c2:
+        max_ticket_price = st.number_input("Precio máximo del boleto (MXN)", min_value=100, step=100)
         
-        st.write("\n")
+    c3, c4 = st.columns(2)
+    
+    with c3:
+        total_tickets_on_sale = st.number_input("Total de boletos a la venta", min_value=100, step=100)
+    
+    with c4:
+        total_face_value = st.number_input("Face value total (MXN)", min_value=10000, step=100)
 
-        
-    elif option == "Ingresar datos manualmente":
-        st.write("\n")
-        
-        # Calendar to select the event date
-        selected_date = st.date_input("Fecha del evento")
-        dayofweek_start = 0 if selected_date.weekday() == 6 else selected_date.weekday() + 1
-        start_month = selected_date.month
+    avg_ticket_price = total_face_value / total_tickets_on_sale
+    
+    # Chartmetric artist data
+    if "cm_id" not in st.session_state:
+        st.session_state['cm_id'] = ''
 
-        # Venue data
-        venues_df = utils.get_venues_data()
-        selected_venue = st.selectbox("Seleccione el venue", venues_df['VENUE'])
-        venue_data = venues_df[selected_venue == venues_df['VENUE']]
-        
-        # Demographics data from INEGI
-        inegi_data = utils.get_inegi_data(venue_data.iloc[0]['CITY'], venue_data.iloc[0]['STATE'])
-        
-        # Chartmetric artist data
-        cm_id = st.text_input("Chartmetric ID del artista", placeholder='1152538')
-        artist_data = utils.get_cm_data(cm_id)
-        guests = st.number_input("Número de artistas invitados", min_value=0, step=1)
+    artist_name = st.text_input("Nombre del artista", placeholder="Luis Miguel")
 
-        # Ticket data
-        ticket_type_price = st.number_input("Precio del boleto", min_value=50, step=100)
-        ticket_type_quantity = st.number_input("Cantidad de boletos a la venta", min_value=50, step=100)
-        ticket_type = st.radio("Selecciona el tipo de ticket:", ("General", "VIP", "Meet and Greet"))
+    if artist_name != '':
 
-        df = utils.get_dataframe(dayofweek_start, start_month, venue_data, inegi_data, artist_data, guests, ticket_type_price, ticket_type_quantity, ticket_type)
+        artists = utils.cm_search_artist(artist_name, utils.cm_auth())
         st.write('\n')
-        #st.write(df)
-        preprocessed_data = utils.preprocess_data(df, aditional_columns=False)
+        st.write('\n')
+        
+        # Crear columnas
+        cols = st.columns(5)
+
+        # Mostrar información de cada artista en columnas
+        for idx, artista in enumerate(artists):
+            with cols[idx]:
+                st.markdown(
+                    f"""
+                    <style>
+                    .artist-image {{
+                        width: 150px;
+                        height: 150px;
+                        object-fit: cover;
+                        border-radius: 50%;
+                    }}
+                    </style>
+                    <img src="{artista['image_url']}" class="artist-image">
+                    """,
+                    unsafe_allow_html=True
+                )
+                name = artista['name']
+                if artista['verified']:
+                    name += " ✅"  # Agrega una palomita al nombre si es verificado
+                st.write('\n')
+                st.write(f"**{name}**")
+                st.write(f"**Chartmetric ID:** {artista['id']}")
+                st.write(f"**Followers en Spotify:** {millify(artista['sp_followers']) if artista['sp_followers'] is not None else '-'}")
+                st.write(f"**Listeners en Spotify:** {millify(artista['sp_monthly_listeners']) if artista['sp_monthly_listeners'] is not None else '-'}")
+                st.write(f"**Score del artista:** {millify(artista['cm_artist_score']) if artista['cm_artist_score'] is not None else '-'}")
+
+                if st.button("Seleccionar este artista", key=artista['id']):
+                    # Se guarda en session state para mantener siempre el ultimo valor seleccionado
+                    st.session_state['cm_id'] = artista['id']
+
+    st.write('\n')
+    st.write('\n')
+    st.write(f"ID de artista elegido: {st.session_state['cm_id']}")
+    artist_data = utils.get_cm_data(st.session_state['cm_id'])
+
+    # Get dataframe with data for the model
+    df = utils.get_dataframe(venue_data, inegi_data, artist_data, min_ticket_price, 
+                                avg_ticket_price, max_ticket_price, total_tickets_on_sale, total_face_value)
+    st.write('\n')
+    st.subheader('Datos de entrada')
+    st.write('\n')
+    st.write(df)
+    
 
         
 
     
     if st.button("Obtener Predicciones"):
 
-        # Use local model
-        if utils.DEPLOY_LOCAL:
-            predictions = model.predict(preprocessed_data)
+        # Preprocess the data for the model
+        preprocessed_data = utils.preprocess_data(df, aditional_columns=False)
 
-        # Use Sagemaker API model 
-        else:
-            # Prepare payload for API model
-            payload = json.dumps('')
-            # Use API sagemaker model
-            prediction = client.predict('ticketsmodel', payload)
-            # Make prediction from API
-            predictions = prediction['predictions'][0]
-            
+        # Get predictions from model
+        predictions = model.predict(preprocessed_data)
 
         # Show predictions
         st.write("\n")
         st.subheader("Predicciones del modelo")
         predictions_df = pd.DataFrame()
 
-        if option == "Buscar datos con ID de evento":
-            # Ticket type
-            predictions_df['Tipo de Boleto'] = event_data['TICKET_TYPE_NAME']
-            # Sold out %
-            predictions_df['Sold out prediccion (%)'] = pd.DataFrame(predictions, columns=['Sold out prediccion (%)'])
-            predictions_df['Sold out real (%)'] = event_data['TICKET_TYPE_SOLD_OUT'].astype(float) * 100
-            # Tickets sold
-            predictions_df['Tickets vendidos prediccion'] = predictions_df['Sold out prediccion (%)'] * event_data['TICKET_TYPE_QUANTITY']
-            predictions_df['Tickets vendidos real'] = event_data["TICKETS_SOLD"]
-            # Tickets sold value
-            predictions_df['Valor de tickets prediccion (MXN)'] = predictions_df['Tickets vendidos prediccion'] * event_data['TICKET_TYPE_PRICE']
-            predictions_df['Valor de tickets real (MXN)'] = event_data["TICKETS_CALCULATED_FACE_VALUE"]
-            # Formating
-            predictions_df['Sold out prediccion (%)'] = predictions_df['Sold out prediccion (%)'] * 100
-            predictions_df[['Sold out prediccion (%)', 'Sold out real (%)']] = predictions_df[['Sold out prediccion (%)','Sold out real (%)']].round(decimals=2)
-            predictions_df[['Tickets vendidos prediccion', 'Valor de tickets prediccion (MXN)']] = predictions_df[['Tickets vendidos prediccion', 'Valor de tickets prediccion (MXN)']].round()
-
-        else:
-            # Sold out %
-            predictions_df['Sold out prediccion (%)'] = pd.DataFrame(predictions, columns=['Sold out prediccion (%)'])
-            # Tickets sold
-            predictions_df['Tickets vendidos prediccion'] = predictions_df['Sold out prediccion (%)'] * ticket_type_quantity
-            # Tickets sold value
-            predictions_df['Valor de tickets prediccion (MXN)'] = predictions_df['Tickets vendidos prediccion'] * ticket_type_price
-            # Formating
-            predictions_df['Sold out prediccion (%)'] = predictions_df['Sold out prediccion (%)'] * 100
-            predictions_df['Sold out prediccion (%)'] = predictions_df['Sold out prediccion (%)'].round(decimals=2)
-            predictions_df[['Tickets vendidos prediccion', 'Valor de tickets prediccion (MXN)']] = predictions_df[['Tickets vendidos prediccion', 'Valor de tickets prediccion (MXN)']].round()
-
+        # Sold out %
+        predictions_df['Sold out prediccion (%)'] = pd.DataFrame(predictions, columns=['Sold out prediccion (%)'])
+        # Tickets sold
+        predictions_df['Tickets vendidos prediccion'] = predictions_df['Sold out prediccion (%)'] * total_tickets_on_sale
+        # Tickets sold value
+        predictions_df['Face value total prediccion (MXN)'] = round(predictions_df['Tickets vendidos prediccion'] * avg_ticket_price)
+        # Formating
+        predictions_df['Sold out prediccion (%)'] = predictions_df['Sold out prediccion (%)'] * 100
+        predictions_df['Sold out prediccion (%)'] = predictions_df['Sold out prediccion (%)'].round(decimals=2)
+        predictions_df[['Tickets vendidos prediccion', 'Face value total prediccion (MXN)']] = predictions_df[['Tickets vendidos prediccion', 'Face value total prediccion (MXN)']].round()
 
         st.write(predictions_df)
-        st.warning(f"El error promedio del modelo es de 25.63% del sold out.")
+        st.warning(f"El error promedio del modelo es del 18% en el sold out.")
 
 
 if __name__ == "__main__":
