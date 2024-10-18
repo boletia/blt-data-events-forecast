@@ -6,6 +6,7 @@ import boto3
 import utils
 import mlflow
 import joblib
+import pickle
 from datetime import datetime
 from mlflow.deployments import get_deploy_client
 from millify import millify
@@ -14,7 +15,10 @@ from millify import millify
 def main():
 
     # Load model
-    model = joblib.load('model.pkl')
+    #model = joblib.load('model.pkl')
+
+    with open('model.pkl', 'rb') as f:
+        model = pickle.load(f)
 
     st.title("Forecast de Eventos")
     st.write("\n")
@@ -124,16 +128,15 @@ def main():
         # Sold out %
         predictions_df['Sold out prediccion (%)'] = pd.DataFrame(predictions, columns=['Sold out prediccion (%)'])
         # Tickets sold
-        predictions_df['Tickets vendidos prediccion'] = predictions_df['Sold out prediccion (%)'] * total_tickets_on_sale
+        predictions_df['Tickets vendidos prediccion'] = predictions_df['Sold out prediccion (%)'] * total_tickets_on_sale / 100
         # Tickets sold value
         predictions_df['Face value total prediccion (MXN)'] = round(predictions_df['Tickets vendidos prediccion'] * avg_ticket_price)
         # Formating
-        predictions_df['Sold out prediccion (%)'] = predictions_df['Sold out prediccion (%)'] * 100
         predictions_df['Sold out prediccion (%)'] = predictions_df['Sold out prediccion (%)'].round(decimals=2)
         predictions_df[['Tickets vendidos prediccion', 'Face value total prediccion (MXN)']] = predictions_df[['Tickets vendidos prediccion', 'Face value total prediccion (MXN)']].round()
 
         st.write(predictions_df)
-        st.warning(f"El error promedio del modelo es del 18% en el sold out.")
+        #st.warning(f"El error promedio del modelo es del 24% en el sold out.")
 
 
 if __name__ == "__main__":
