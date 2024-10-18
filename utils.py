@@ -5,6 +5,7 @@ import joblib
 import datetime
 import math
 import time
+import pickle
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -394,7 +395,10 @@ def preprocess_data(event_data, aditional_columns=False):
     
 
     # Load and use the preprocessor object
-    preprocessor = joblib.load("preprocessor.pkl")
+    #preprocessor = joblib.load("preprocessor.pkl")
+    with open('preprocessor.pkl', 'rb') as f:
+        preprocessor = pickle.load(f)
+
     preprocessed_data = preprocessor.transform(event_data)
 
     return preprocessed_data
@@ -430,7 +434,7 @@ def get_venues_data():
     
 
 """ Get demographics data from INEGI """
-@st.cache_data
+#@st.cache_data
 def get_inegi_data(state):
     # Execute a query to extract the data
     sql = f"""select
@@ -441,7 +445,6 @@ def get_inegi_data(state):
             from demographics.income_by_city
             where state = '{state}'
             """
-    print(sql)
     try:
         cur.execute(sql)
         # Converting data into a dataframe
@@ -547,19 +550,19 @@ def cm_yt_metrics(cm_id, headers):
         url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/youtube_channel?latest=true"
         response = cm_api_call(url, headers)
         subscribers = response.json()['obj']['subscribers'][0]['value']
-        views = response.json()['obj']['views'][0]['value']
+        #views = response.json()['obj']['views'][0]['value']
 
-        return subscribers, views
+        return subscribers
     
     except:
-        return None, None
+        return None
 
 
 # Get tiktok metrics
 @st.cache_data
 def cm_tt_metrics(cm_id, headers):
     try:
-        url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/tiktok?latest=true"
+        url = f"https://api.chartmetric.com/api/artist/{cm_id}/stat/tiktok?latest=true&code2=MX"
         response = cm_api_call(url, headers)
         followers = response.json()['obj']['followers'][0]['value']
         likes = response.json()['obj']['likes'][0]['value']
@@ -577,25 +580,24 @@ def get_cm_data(cm_id):
     cm_data = pd.DataFrame()
 
     # Spotify data
-    cm_data["SP_MONTHLY_LISTENERS_MX"] = [cm_sp_listeners(cm_id, headers)]
+    #cm_data["SP_MONTHLY_LISTENERS_MX"] = [cm_sp_listeners(cm_id, headers)]
     sp_followers_to_listeners, sp_popularity = cm_sp_metrics(cm_id, headers)
     cm_data["SP_FOLLOWERS_TO_LISTENERS_RATIO"] = [sp_followers_to_listeners]
     cm_data["SP_POPULARITY"] = sp_popularity
 
     # Instagram data
-    cm_ig_metrics(cm_id, headers)
     ig_followers = cm_ig_metrics(cm_id, headers)
     cm_data["IG_FOLLOWERS"] = [ig_followers]
 
     # Youtube data
-    yt_subs, views = cm_yt_metrics(cm_id, headers)
+    yt_subs = cm_yt_metrics(cm_id, headers)
     cm_data["YT_SUBSCRIBERS"] = [yt_subs]
-    cm_data["YT_VIEWS"] = [views]
+    #cm_data["YT_VIEWS"] = [views]
 
     # Tiktok data
-    tt_followers, tt_likes = cm_tt_metrics(cm_id, headers)
-    cm_data["TT_FOLLOWERS"] = [tt_followers]
-    cm_data["TT_LIKES"] = [tt_likes]
+    #tt_followers_country, tt_likes = cm_tt_metrics(cm_id, headers)
+    #cm_data["TT_FOLLOWERS_COUNTRY"] = [tt_followers_country]
+    #cm_data["TT_LIKES"] = [tt_likes]
     
     return cm_data
 
@@ -607,25 +609,27 @@ def get_dataframe(venue_data, inegi_data, artist_data, min_ticket_price,
     inegi_data = inegi_data.reset_index(drop=True)
     artist_data = artist_data.reset_index(drop=True)
     df = pd.DataFrame()
-    df['VENUE_RATING'] = venue_data['VENUE_RATING']
+    #df['VENUE_RATING'] = venue_data['VENUE_RATING']
     df['VENUE_TOTAL_RATINGS'] = venue_data['VENUE_TOTAL_RATINGS']
-    df['STATE_POPULATION'] = inegi_data['STATE_POPULATION'].astype(int)
+    #df['STATE_POPULATION'] = inegi_data['STATE_POPULATION'].astype(int)
     df['TICKET_PCT_30'] = avg_ticket_price / inegi_data['PCT_30'].astype(float) * 100
     df['TICKET_PCT_50'] = avg_ticket_price / inegi_data['PCT_50'].astype(float) * 100
     df['TICKET_PCT_70'] = avg_ticket_price / inegi_data['PCT_70'].astype(float) * 100
-    df['SP_MONTHLY_LISTENERS_MX'] = artist_data['SP_MONTHLY_LISTENERS_MX']
-    df['SP_MONTHLY_LISTENERS_STATE'] = None if df.iloc[0]['SP_MONTHLY_LISTENERS_MX'] is None else round(df['SP_MONTHLY_LISTENERS_MX'].astype(int) * df['STATE_POPULATION'].astype(int) / 127500000)
+    #df['SP_MONTHLY_LISTENERS_MX'] = artist_data['SP_MONTHLY_LISTENERS_MX']
+    #df['SP_MONTHLY_LISTENERS_STATE'] = None if artist_data.iloc[0]['SP_MONTHLY_LISTENERS_MX'] is None else round(artist_data['SP_MONTHLY_LISTENERS_MX'].astype(int) * df['STATE_POPULATION'].astype(int) / 127500000)
     df['SP_FOLLOWERS_TO_LISTENERS_RATIO'] = artist_data['SP_FOLLOWERS_TO_LISTENERS_RATIO'].astype(float)
     df['SP_POPULARITY'] = artist_data['SP_POPULARITY']
+    #df['YT_VIEWS'] = artist_data['YT_VIEWS']
+    #df['TT_FOLLOWERS'] = artist_data['TT_FOLLOWERS']
+    #df['TT_FOLLOWERS_STATE'] = None if artist_data.iloc[0]['TT_FOLLOWERS_COUNTRY'] is None else round(artist_data['TT_FOLLOWERS_COUNTRY'].astype(int) * df['STATE_POPULATION'].astype(int) / 127500000)
+    #df['TT_LIKES'] = artist_data['TT_LIKES']
     df['IG_FOLLOWERS'] = artist_data['IG_FOLLOWERS']
     df['YT_SUBSCRIBERS'] = artist_data['YT_SUBSCRIBERS']
-    df['YT_VIEWS'] = artist_data['YT_VIEWS']
-    df['TT_FOLLOWERS'] = artist_data['TT_FOLLOWERS']
-    df['TT_LIKES'] = artist_data['TT_LIKES']
-    df['TOTAL_TICKETS_ON_SALE'] = total_tickets_on_sale
-    df['TOTAL_FACE_VALUE'] = total_face_value
-    df['MIN_TICKET_PRICE'] = min_ticket_price
     df['AVERAGE_TICKET_PRICE'] = avg_ticket_price
+    df['MIN_TICKET_PRICE'] = min_ticket_price
+    #df['MEDIAN_TICKET_PRICE'] = avg_ticket_price
     df['MAX_TICKET_PRICE'] = max_ticket_price
+    df['TICKETS_TARGET'] = total_tickets_on_sale
+    df['SALES_TARGET'] = total_face_value
     return df
     
