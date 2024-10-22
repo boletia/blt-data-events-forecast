@@ -14,11 +14,13 @@ from millify import millify
 
 def main():
 
-    # Load model
-    #model = joblib.load('model.pkl')
-
+    # Load original model
     with open('model.pkl', 'rb') as f:
         model = pickle.load(f)
+
+    # Load synthetic data model
+    with open('model2.pkl', 'rb') as f:
+        model2 = pickle.load(f)
 
     st.title("Forecast de Eventos")
     st.write("\n")
@@ -100,43 +102,93 @@ def main():
     st.write(f"ID de artista elegido: {st.session_state['cm_id']}")
     artist_data = utils.get_cm_data(st.session_state['cm_id'])
 
-    # Get dataframe with data for the model
+    # Get dataframe with data for the original model
     df = utils.get_dataframe(venue_data, inegi_data, artist_data, min_ticket_price, 
                                 avg_ticket_price, max_ticket_price, total_tickets_on_sale, total_face_value)
-    st.write('\n')
-    st.subheader('Datos de entrada')
-    st.write('\n')
-    st.write(df)
     
+    # Get dataframe with data for the synthetic data model
+    df2 = utils.get_dataframe2(venue_data, inegi_data, artist_data, min_ticket_price, 
+                                avg_ticket_price, max_ticket_price, total_tickets_on_sale, total_face_value)
+    st.write('\n')
 
         
 
     
     if st.button("Obtener Predicciones"):
 
-        # Preprocess the data for the model
-        preprocessed_data = utils.preprocess_data(df, aditional_columns=False)
+        pc1, pc2 = st.columns(2)
+        st.write('\n')
 
-        # Get predictions from model
-        predictions = model.predict(preprocessed_data)
+        # For original model
+        with pc1:
 
-        # Show predictions
-        st.write("\n")
-        st.subheader("Predicciones del modelo")
-        predictions_df = pd.DataFrame()
+            # Preprocess the data for the model
+            preprocessed_data = utils.preprocess_data(df)
 
-        # Sold out %
-        predictions_df['Sold out prediccion (%)'] = pd.DataFrame(predictions, columns=['Sold out prediccion (%)'])
-        # Tickets sold
-        predictions_df['Tickets vendidos prediccion'] = predictions_df['Sold out prediccion (%)'] * total_tickets_on_sale / 100
-        # Tickets sold value
-        predictions_df['Face value total prediccion (MXN)'] = round(predictions_df['Tickets vendidos prediccion'] * avg_ticket_price)
-        # Formating
-        predictions_df['Sold out prediccion (%)'] = predictions_df['Sold out prediccion (%)'].round(decimals=2)
-        predictions_df[['Tickets vendidos prediccion', 'Face value total prediccion (MXN)']] = predictions_df[['Tickets vendidos prediccion', 'Face value total prediccion (MXN)']].round()
+            # Get predictions from model
+            predictions = model.predict(preprocessed_data)
 
-        st.write(predictions_df)
-        #st.warning(f"El error promedio del modelo es del 24% en el sold out.")
+            # Show predictions
+            st.write("\n")
+            st.subheader("MODELO ORIGINAL")
+            st.subheader('Datos de entrada')
+            st.write('\n')
+            st.write(df)
+
+            predictions_df = pd.DataFrame()
+
+            st.subheader('Predicciones')
+            st.write('\n')
+
+            # Sold out %
+            predictions_df['Sold out prediccion (%)'] = pd.DataFrame(predictions, columns=['Sold out prediccion (%)'])
+            # Tickets sold
+            predictions_df['Tickets vendidos prediccion'] = predictions_df['Sold out prediccion (%)'] * total_tickets_on_sale
+            # Tickets sold value
+            predictions_df['Face value total prediccion (MXN)'] = round(predictions_df['Tickets vendidos prediccion'] * avg_ticket_price)
+            # Formating
+            predictions_df['Sold out prediccion (%)'] = predictions_df['Sold out prediccion (%)'] * 100
+            predictions_df['Sold out prediccion (%)'] = predictions_df['Sold out prediccion (%)'].round(decimals=2)
+            predictions_df[['Tickets vendidos prediccion', 'Face value total prediccion (MXN)']] = predictions_df[['Tickets vendidos prediccion', 'Face value total prediccion (MXN)']].round()
+
+            st.write(predictions_df)
+            #st.warning(f"El error promedio del modelo es del 18% en el sold out.")
+
+
+        # For synthetic data model
+        with pc2:
+
+            # Preprocess the data for the model
+            preprocessed_data2 = utils.preprocess_data(df2, preprocessor_num=2)
+
+            # Get predictions from model
+            predictions2 = model2.predict(preprocessed_data2)
+
+            # Show predictions
+            st.write("\n")
+            st.subheader("MODELO DATA SINTÉTICA")
+            st.subheader('Datos de entrada')
+            st.write('\n')
+            st.write(df2)
+
+            predictions_df2 = pd.DataFrame()
+
+            st.subheader('Predicciones')
+            st.write('\n')
+
+            # Sold out %
+            predictions_df2['Sold out prediccion (%)'] = pd.DataFrame(predictions2, columns=['Sold out prediccion (%)'])
+            # Tickets sold
+            predictions_df2['Tickets vendidos prediccion'] = predictions_df2['Sold out prediccion (%)'] * total_tickets_on_sale / 100
+            # Tickets sold value
+            predictions_df2['Face value total prediccion (MXN)'] = round(predictions_df2['Tickets vendidos prediccion'] * avg_ticket_price)
+            # Formating
+            predictions_df2['Sold out prediccion (%)'] = predictions_df2['Sold out prediccion (%)'].round(decimals=2)
+            predictions_df2[['Tickets vendidos prediccion', 'Face value total prediccion (MXN)']] = predictions_df2[['Tickets vendidos prediccion', 'Face value total prediccion (MXN)']].round()
+
+            st.write(predictions_df2)
+            #st.warning(f"El error promedio del modelo es del 22% en el sold out.")
+
 
 
 if __name__ == "__main__":
