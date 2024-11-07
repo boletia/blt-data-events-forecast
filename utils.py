@@ -54,7 +54,7 @@ def preprocess_data(event_data, preprocessor_num=1):
 
 
 """ Get Google Maps venue data """
-@st.cache_data
+@st.cache_data(persist="disk")
 def get_venues_data():
     # Execute a query to extract the data
     sql = f"""select
@@ -83,7 +83,6 @@ def get_venues_data():
     
 
 """ Get demographics data from INEGI """
-@st.cache_data
 def get_inegi_data(state):
     # Execute a query to extract the data
     sql = f"""select
@@ -193,7 +192,7 @@ def cm_ig_metrics(cm_id, headers):
         return None
     
 
-# Get youtube metrics
+""" Get youtube metrics """
 @st.cache_data
 def cm_yt_metrics(cm_id, headers):
     try:
@@ -208,7 +207,7 @@ def cm_yt_metrics(cm_id, headers):
         return None, None
 
 
-# Get tiktok metrics
+""" Get tiktok metrics """
 @st.cache_data
 def cm_tt_metrics(cm_id, headers):
     try:
